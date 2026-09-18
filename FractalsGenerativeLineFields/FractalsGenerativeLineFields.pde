@@ -30,11 +30,11 @@ void draw() {
 
 void generateFlowField() {
   float noiseScale = 0.01;
-  float sineWaveWeight = 0.5;
+  float noiseWeight = 0.4;
+  float sineWaveWeight = 0.15;
   for (int i = 0; i < rows; i++) {
     for (int j = 0; j < cols; j++) {
-      // flow field generation generation begins with line pointing down by default
-      flowField[i][j] = map(noise(i * noiseScale, j * noiseScale) + sineWaveWeight * sin(i * (noiseScale * 5)), 0, 1, 0, 2 * PI);
+      flowField[i][j] = map(noiseWeight * noise(i * noiseScale, j * noiseScale) + sineWaveWeight * sin(i * (noiseScale * 5)), 0, 1, 0, 2 * PI);
     }
   }
 }
@@ -42,18 +42,22 @@ void generateFlowField() {
 void generateCircleObstacles() {
   CircleObstacle firstCircle = new CircleObstacle();
   CircleObstacle secondCircle = new CircleObstacle();
-  int radiusBuffer = 2;
+  int radiusBuffer = 7;
+  int positionalBuffer = 10;
   
-  firstCircle.radius = int(random(0, cols / 2 - radiusBuffer)) + 1;
-  firstCircle.xPos = int(random(0 + firstCircle.radius, cols / 2 - firstCircle.radius)) + 1;
-  firstCircle.yPos = int(random(0 + firstCircle.radius, rows / 2 - firstCircle.radius)) + 1;
+  firstCircle.radius = int(random(radiusBuffer, cols / 2 - radiusBuffer)) + 1;
+  firstCircle.xPos = int(random(0 + firstCircle.radius, cols / 2 - firstCircle.radius));
+  firstCircle.yPos = int(random(positionalBuffer + firstCircle.radius, rows / 2 - firstCircle.radius));
   
-  secondCircle.radius = int(random(0, cols / 2 - radiusBuffer)) + 1;
-  secondCircle.xPos = int(random(cols / 2 + firstCircle.radius, cols - firstCircle.radius)) + 1;
-  secondCircle.yPos = int(random(rows / 2 + firstCircle.radius, rows - firstCircle.radius)) + 1;
+  secondCircle.radius = int(random(radiusBuffer, cols / 2 - radiusBuffer)) + 1;
+  secondCircle.xPos = int(random(cols / 2 + firstCircle.radius, cols - firstCircle.radius));
+  secondCircle.yPos = int(random(rows / 2 + firstCircle.radius, rows - firstCircle.radius - positionalBuffer));
   
   circleObstacles[0] = firstCircle;
   circleObstacles[1] = secondCircle;
+  
+  print("Circle 1 radius: ", firstCircle.radius, "\n");
+  print("Circle 2 radius: ", secondCircle.radius, "\n");
 }
 
 void drawFlowField() {
