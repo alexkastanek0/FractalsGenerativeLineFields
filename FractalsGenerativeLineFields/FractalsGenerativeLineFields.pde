@@ -89,9 +89,30 @@ void drawLineField() {
       float angle = flowField[int(y / scale)][int(x / scale)];
       newX = x + scale * cos(angle);
       newY = y + scale * sin(angle);
+      for (int c = 0; c < circleObstacleCount; c++) {
+        PVector repulsiveForce = calculateObstacleRepulsion(x, y, circleObstacles[c]);
+        newX += repulsiveForce.x * 10;
+        newY += repulsiveForce.y * 10;
+      }
       line(x, y, newX, newY);
       x = newX;
       y = newY;
     }
   }
+}
+
+PVector calculateObstacleRepulsion(float x, float y, CircleObstacle circle) {
+  float deltaX = x - circle.xPos * scale;
+  float deltaY = y - circle.yPos * scale;
+  float distance = sqrt(deltaX * deltaX + deltaY * deltaY);
+  float influenceMultiplier = 1.5;
+  float influence = circle.radius * scale * influenceMultiplier;
+  
+  if (distance > influence) {
+    return new PVector(0, 0);
+  }
+  
+  float strength = 1 - distance / influence;
+  
+  return new PVector(deltaX / distance * strength, deltaY / distance * strength);
 }
