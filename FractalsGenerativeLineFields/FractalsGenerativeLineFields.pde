@@ -26,6 +26,7 @@ void setup() {
 void draw() {
   drawFlowField();
   drawCircleObstacles();
+  drawLineField();
 }
 
 void generateFlowField() {
@@ -75,5 +76,22 @@ void drawFlowField() {
 void drawCircleObstacles() {
   for (int i = 0; i < circleObstacleCount; i++) {
     circle(circleObstacles[i].xPos * scale, circleObstacles[i].yPos * scale, circleObstacles[i].radius * scale);
+  }
+}
+
+void drawLineField() {
+  float x,y;
+  float newX,newY;
+  for (int i = 0; i < rows; i++) {
+    x = i * scale;
+    y = 0;
+    while (x >= 0 && x < width && y >= 0 && y < height) {
+      float angle = flowField[int(y / scale)][int(x / scale)];
+      newX = x + scale * cos(angle);
+      newY = y + scale * sin(angle);
+      line(x, y, newX, newY);
+      x = newX;
+      y = newY;
+    }
   }
 }
