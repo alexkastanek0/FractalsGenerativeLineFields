@@ -16,10 +16,12 @@ void draw() {
 }
 
 void generateFlowField() {
+  float noiseScale = 0.01;
+  float sineWaveWeight = 0.5;
   for (int i = 0; i < rows; i++) {
     for (int j = 0; j < cols; j++) {
       // flow field generation generation begins with line pointing down by default
-      flowField[i][j] = PI/2;
+      flowField[i][j] = map(noise(i * noiseScale, j * noiseScale) + sineWaveWeight * sin(i * (noiseScale * 5)), 0, 1, 0, 2 * PI);
     }
   }
 }
