@@ -79,6 +79,8 @@ float generateFlowFieldAngle(float row, float col) {
         0,
         1
       );
+      
+      strength = strength * strength * (3 - 2 * strength);
 
       // blend the angles
       flowFieldAngle = lerpAngle(
