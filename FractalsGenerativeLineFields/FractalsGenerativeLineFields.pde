@@ -6,38 +6,101 @@ class CircleObstacle {
 float scale = 10;
 int rows,cols;
 float[][] flowField;
+float noiseIterationAmount = 0.001;
+float noiseIteration = 0;
 
 int circleObstacleCount = 2;
 CircleObstacle[] circleObstacles;
 
 void setup() {
   size(360, 640);
-  background(255);
   
   rows = int(height/scale);
   cols = int(width/scale);
-  flowField = new float[rows][cols];
-  generateFlowField();
   
   circleObstacles = new CircleObstacle[circleObstacleCount];
   generateCircleObstacles();
+  
+  flowField = new float[rows][cols];
+  generateFlowField();
 }
 
 void draw() {
+  background(255);
+  generateFlowField();
   drawFlowField();
   drawCircleObstacles();
   drawLineField();
+  noiseIteration += noiseIterationAmount;
 }
 
 void generateFlowField() {
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < cols; j++) {
+      flowField[i][j] = generateFlowFieldAngle(i, j);
+    }
+  }
+}
+
+float generateFlowFieldAngle(float row, float col) {
   float noiseScale = 0.01;
   float noiseWeight = 0.4;
   float sineWaveWeight = 0.15;
-  for (int i = 0; i < rows; i++) {
-    for (int j = 0; j < cols; j++) {
-      flowField[i][j] = map(noiseWeight * noise(i * noiseScale, j * noiseScale) + sineWaveWeight * sin(i * (noiseScale * 5)), 0, 1, 0, 2 * PI);
+  float flowFieldAngle = map(noiseWeight * noise(row * noiseScale + noiseIteration, col * noiseScale + noiseIteration) + sineWaveWeight * sin(row * (noiseScale * 5)), 0, 1, 0, 2 * PI);
+  // calculate repulsion
+  for (int c = 0; c < circleObstacleCount; c++) {
+    CircleObstacle circle = circleObstacles[c];
+    float deltaX = col - circle.xPos;
+    float deltaY = row - circle.yPos;
+    float distance = sqrt(deltaX * deltaX + deltaY * deltaY);
+    float influenceMultiplier = 1.05;
+    float influence = circle.radius * influenceMultiplier;
+    if (distance < influence) {
+      // angle pointing away from the obstacle
+      float radialAngle = atan2(deltaY, deltaX);
+      
+      // two possible directions around the obstacle
+      float tangentAngle1 = radialAngle + PI / 2;
+      float tangentAngle2 = radialAngle - PI / 2;
+      float tangentAngle;
+      
+      // choose the tangent closest to the original flow direction
+      float difference1 = angleDifference(flowFieldAngle, tangentAngle1);
+      float difference2 = angleDifference(flowFieldAngle, tangentAngle2);
+      if (abs(difference1) < abs(difference2)) {
+        tangentAngle = tangentAngle1;
+      } else {
+        tangentAngle = tangentAngle2;
+      }
+      
+      // 0 = no influence, 1 = maximum influence
+      float strength = constrain(
+        (influence - distance) / (influence - circle.radius / 2),
+        0,
+        1
+      );
+
+      // blend the angles
+      flowFieldAngle = lerpAngle(
+        flowFieldAngle,
+        tangentAngle,
+        strength
+      );
     }
   }
+  return flowFieldAngle;
+}
+
+float angleDifference(float a, float b) {
+  return atan2(
+    sin(b - a),
+    cos(b - a)
+  );
+}
+
+float lerpAngle(float a, float b, float t) {
+  float difference = angleDifference(a, b);
+  return a + difference * t;
 }
 
 void generateCircleObstacles() {
@@ -89,30 +152,9 @@ void drawLineField() {
       float angle = flowField[int(y / scale)][int(x / scale)];
       newX = x + scale * cos(angle);
       newY = y + scale * sin(angle);
-      for (int c = 0; c < circleObstacleCount; c++) {
-        PVector repulsiveForce = calculateObstacleRepulsion(x, y, circleObstacles[c]);
-        newX += repulsiveForce.x * 10;
-        newY += repulsiveForce.y * 10;
-      }
       line(x, y, newX, newY);
       x = newX;
       y = newY;
     }
   }
-}
-
-PVector calculateObstacleRepulsion(float x, float y, CircleObstacle circle) {
-  float deltaX = x - circle.xPos * scale;
-  float deltaY = y - circle.yPos * scale;
-  float distance = sqrt(deltaX * deltaX + deltaY * deltaY);
-  float influenceMultiplier = 1.5;
-  float influence = circle.radius * scale * influenceMultiplier;
-  
-  if (distance > influence) {
-    return new PVector(0, 0);
-  }
-  
-  float strength = 1 - distance / influence;
-  
-  return new PVector(deltaX / distance * strength, deltaY / distance * strength);
 }
