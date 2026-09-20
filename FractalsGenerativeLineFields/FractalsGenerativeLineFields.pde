@@ -3,14 +3,44 @@ class CircleObstacle {
   public int radius;
 }
 
+int circleObstacleCount = 2;
+CircleObstacle[] circleObstacles;
+
 float scale = 10;
 int rows,cols;
 float[][] flowField;
 float noiseIterationAmount = 0.001;
 float noiseIteration = 0;
 
-int circleObstacleCount = 2;
-CircleObstacle[] circleObstacles;
+class Particle {
+  PVector position;
+  PVector velocity;
+
+  Particle(float x, float y) {
+    position = new PVector(x, y);
+    velocity = new PVector(0, 0);
+  }
+
+  void update() {
+    PVector acceleration = new PVector(0, 0);
+    float friction = 0.6;
+    acceleration.x = cos(flowField[int(position.y / scale)][int(position.x / scale)]);
+    acceleration.y = sin(flowField[int(position.y / scale)][int(position.x / scale)]);
+    velocity.add(acceleration);
+    position.add(velocity);
+    position.x = (position.x + width) % width;
+    position.y = (position.y + height) % height;
+    velocity.mult(friction);
+  }
+
+  void display() {
+    fill(0);
+    stroke(0);
+    circle(position.x, position.y, 5);
+  }
+}
+
+Particle[] particles;
 
 void setup() {
   size(360, 640);
@@ -23,14 +53,18 @@ void setup() {
   
   flowField = new float[rows][cols];
   generateFlowField(true);
+
+  particles = new Particle[cols];
+  generateParticles();
 }
 
 void draw() {
-  background(255);
+  // background(255);
   generateFlowField(false);
-  drawFlowField();
-  drawCircleObstacles();
-  drawLineField();
+  //drawFlowField();
+  //drawCircleObstacles();
+  //drawLineField();
+  drawParticles();
   noiseIteration += noiseIterationAmount;
 }
 
@@ -169,6 +203,12 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
   return flowFieldAngle;
 }
 
+void generateParticles() {
+  for (int i = 0; i < cols; i++) {
+    particles[i] = new Particle(float(i * cols) / scale, 0);
+  }
+}
+
 /** Draw Functions **/
 
 void drawFlowField() {
@@ -203,6 +243,13 @@ void drawLineField() {
       x = newX;
       y = newY;
     }
+  }
+}
+
+void drawParticles() {
+  for (int i = 0; i < cols; i++) {
+    particles[i].update();
+    particles[i].display();
   }
 }
 
