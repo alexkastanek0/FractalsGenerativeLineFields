@@ -11,36 +11,136 @@ int rows,cols;
 float[][] flowField;
 float noiseIterationAmount = 0.001;
 float noiseIteration = 0;
+float noiseScale = 0.01;
+float noiseWeight = 0.4;
+float sineWaveWeight = 0.15;
 
-class Particle {
+float wiggleSpeedLowerBound = 0.015;
+float wiggleSpeedUpperBound = 0.035;
+float wiggleAmountLowerBound = 0.15;
+float wiggleAmountUpperBound = 0.4;
+float wiggleAmplitude = 0.28;
+float linePointFlowFieldInfluence = 0.025;
+float maximumLinePointSpeed = 0.8;
+float linePointDamping = 0.97;
+
+class LinePoint {
   PVector position;
   PVector velocity;
+  float phase;
+  float wiggleSpeed;
+  float wiggleAmount;
 
-  Particle(float x, float y) {
+  LinePoint(float x, float y) {
     position = new PVector(x, y);
     velocity = new PVector(0, 0);
+    phase = random(TWO_PI);
+    wiggleSpeed = random(wiggleSpeedLowerBound, wiggleSpeedUpperBound);
+    wiggleAmount = random(wiggleAmountLowerBound, wiggleAmountUpperBound);
   }
 
   void update() {
-    PVector acceleration = new PVector(0, 0);
-    float friction = 0.6;
-    acceleration.x = cos(flowField[int(position.y / scale)][int(position.x / scale)]);
-    acceleration.y = sin(flowField[int(position.y / scale)][int(position.x / scale)]);
+    // Keep the flow-field lookup inside the grid.
+    int col = constrain(int(position.x / scale), 0, cols - 1);
+    int row = constrain(int(position.y / scale), 0, rows - 1);
+    float flowAngle = flowField[row][col];
+
+    // Smoothly vary the direction to create a gentle wiggle.
+    float wiggle = sin(frameCount * wiggleSpeed + phase) * wiggleAmount;
+
+    float angle = flowAngle + wiggle;
+
+    // Follow the flow field gently.
+    PVector acceleration = new PVector(
+      cos(angle),
+      0
+    );
+    acceleration.mult(linePointFlowFieldInfluence);
+
     velocity.add(acceleration);
+    velocity.limit(maximumLinePointSpeed);
+
+    // Dampen movement so the dots drift instead of accelerating forever.
+    velocity.mult(linePointDamping);
+
     position.add(velocity);
-    position.x = (position.x + width) % width;
-    position.y = (position.y + height) % height;
-    velocity.mult(friction);
+
+    // Keep dots on the canvas.
+    position.x = constrain(position.x, 0, width - 1);
+    position.y = constrain(position.y, 0, height - 1);
   }
 
   void display() {
+    noStroke();
     fill(0);
-    stroke(0);
     circle(position.x, position.y, 5);
   }
 }
 
-Particle[] particles;
+class LineDrawer {
+  PVector position;
+  PVector velocity;
+  boolean finished = false;
+
+  ArrayList<LinePoint> linePoints;
+
+  LineDrawer(float x, float y) {
+    position = new PVector(x, y);
+    velocity = new PVector(0, 0);
+
+    linePoints = new ArrayList<LinePoint>();
+  }
+
+  void update() {
+    float noiseScale = 0.01;
+    int col = constrain(int(position.x / scale), 0, cols - 1);
+    int row = constrain(int(position.y / scale), 0, rows - 1);
+
+    // draw lines for all created line points
+    for (int i = 0; i < linePoints.size(); i++) {
+      LinePoint linePoint = linePoints.get(i);
+      linePoint.update();
+      if (i > 0) {
+        LinePoint linePoint1 = linePoints.get(i - 1);
+        LinePoint linePoint2 = linePoint;
+        float strokeWeightValue = map(noiseWeight * noise(row * noiseScale + noiseIteration, col * noiseScale + noiseIteration) + sineWaveWeight * sin(row * (noiseScale * 5)), 0, 1, 2, 10);
+        stroke(0);
+        strokeWeight(strokeWeightValue);
+        line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
+      }
+    }
+
+    if (finished) {
+      return;
+    }
+
+    // Stop emitting trail dots at the bottom.
+    if (position.y >= height - 1) {
+      finished = true;
+      return;
+    }
+
+    PVector acceleration = new PVector(0, 0);
+    float friction = 0.6;
+    float angle = flowField[row][col];
+    acceleration.x = cos(angle);
+    acceleration.y = sin(angle);
+    velocity.add(acceleration);
+    position.add(velocity);
+    velocity.mult(friction);
+
+    // Record the circle at its current position.
+    linePoints.add(
+      new LinePoint(position.x, position.y)
+    );
+  }
+
+  void display() {
+    // LinePoint now handles the display
+  }
+}
+
+LineDrawer[] lineDrawers;
 
 void setup() {
   size(360, 640);
@@ -54,17 +154,20 @@ void setup() {
   flowField = new float[rows][cols];
   generateFlowField(true);
 
-  particles = new Particle[cols];
-  generateParticles();
+  lineDrawers = new LineDrawer[cols];
+  generateLineDrawers();
 }
 
 void draw() {
-  // background(255);
+  background(255);
   generateFlowField(false);
+
   //drawFlowField();
   //drawCircleObstacles();
   //drawLineField();
-  drawParticles();
+
+  drawLines();
+
   noiseIteration += noiseIterationAmount;
 }
 
@@ -106,9 +209,6 @@ void generateFlowField(boolean initialGeneration) {
 }
 
 float generateFlowFieldAngle(float row, float col, boolean initialGeneration) {
-  float noiseScale = 0.01;
-  float noiseWeight = 0.4;
-  float sineWaveWeight = 0.15;
   float flowFieldAngle = map(noiseWeight * noise(row * noiseScale + noiseIteration, col * noiseScale + noiseIteration) + sineWaveWeight * sin(row * (noiseScale * 5)), 0, 1, 0, 2 * PI);
   return flowFieldAngle;
 }
@@ -203,9 +303,12 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
   return flowFieldAngle;
 }
 
-void generateParticles() {
+void generateLineDrawers() {
   for (int i = 0; i < cols; i++) {
-    particles[i] = new Particle(float(i * cols) / scale, 0);
+    float x = (i * scale);
+    float y = 0;
+    lineDrawers[i] = new LineDrawer(x, y);
+    print("Creating line drawer " + i + " at " + x + "\n");
   }
 }
 
@@ -217,7 +320,7 @@ void drawFlowField() {
       pushMatrix();
       translate(j*scale, i*scale); // row index is technically y value and col index is technically x value
       rotate(flowField[i][j]);
-      line(0, 0, scale*0.5, 0);
+      line(0, 0, scale * 0.5, 0);
       popMatrix();
     }
   }
@@ -246,10 +349,9 @@ void drawLineField() {
   }
 }
 
-void drawParticles() {
-  for (int i = 0; i < cols; i++) {
-    particles[i].update();
-    particles[i].display();
+void drawLines() {
+  for (int i = 0; i < lineDrawers.length; i++) {
+    lineDrawers[i].update();
   }
 }
 
