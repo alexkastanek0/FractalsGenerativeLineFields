@@ -20,9 +20,17 @@ float wiggleSpeedUpperBound = 0.035;
 float wiggleAmountLowerBound = 0.15;
 float wiggleAmountUpperBound = 0.4;
 float wiggleAmplitude = 0.28;
-float linePointFlowFieldInfluence = 0.025;
+float linePointFlowFieldInfluence = 0.1;
 float maximumLinePointSpeed = 0.8;
+float maximumLineLength = 100;
 float linePointDamping = 0.97;
+float lineCountMultiplier = 0.1875;
+
+float obstacleRepulsionDistance = 50;
+float obstacleRepulsionStrength = 0.15;
+float lineRepulsionDistance = 50;
+float lineRepulsionStrength = 0.1;
+float maximumRepulsionForce = 0.2;
 
 class LinePoint {
   PVector position;
@@ -39,7 +47,7 @@ class LinePoint {
     wiggleAmount = random(wiggleAmountLowerBound, wiggleAmountUpperBound);
   }
 
-  void update() {
+  void update(LineDrawer owner) {
     // Keep the flow-field lookup inside the grid.
     int col = constrain(int(position.x / scale), 0, cols - 1);
     int row = constrain(int(position.y / scale), 0, rows - 1);
@@ -53,9 +61,16 @@ class LinePoint {
     // Follow the flow field gently.
     PVector acceleration = new PVector(
       cos(angle),
-      0
+      owner.finished ? sin(angle) * 0.1 : 0
     );
     acceleration.mult(linePointFlowFieldInfluence);
+
+    // Add repulsion from obstacles and other lines.
+    float friction = 0.25;
+    acceleration.add(calculateObstacleRepulsion());
+    acceleration.add(calculateLineRepulsion(owner));
+    acceleration.mult(friction);
+    
 
     velocity.add(acceleration);
     velocity.limit(maximumLinePointSpeed);
@@ -66,8 +81,92 @@ class LinePoint {
     position.add(velocity);
 
     // Keep dots on the canvas.
-    position.x = constrain(position.x, 0, width - 1);
-    position.y = constrain(position.y, 0, height - 1);
+    //  position.x = constrain(position.x, 0, width - 1);
+    //  position.y = constrain(position.y, 0, height - 1);
+    position.x = (position.x + width) % width;
+    position.y = (position.y + height) % height;
+  }
+
+  PVector calculateObstacleRepulsion() {
+    PVector force = new PVector(0, 0);
+
+    for (int i = 0; i < circleObstacleCount; i++) {
+      CircleObstacle obstacle = circleObstacles[i];
+
+      // Obstacle center in canvas pixels.
+      float centerX = obstacle.xPos * scale;
+      float centerY = obstacle.yPos * scale;
+
+      float dx = position.x - centerX;
+      float dy = position.y - centerY;
+
+      float distance = sqrt(dx * dx + dy * dy);
+
+      // Treat obstacle.radius as a radius in grid units.
+      float obstacleRadius = obstacle.radius * scale;
+      float safeDistance = obstacleRadius + obstacleRepulsionDistance;
+
+      if (distance < safeDistance) {
+        PVector away;
+
+        if (distance > 0.001) {
+          away = new PVector(dx, dy);
+          away.normalize();
+        } else {
+          // Fallback if a point is exactly at the center.
+          away = PVector.random2D();
+        }
+
+        float strength = (safeDistance - distance) / safeDistance;
+
+        away.mult(strength * obstacleRepulsionStrength);
+        force.add(away);
+      }
+    }
+
+    return force;
+  }
+
+  PVector calculateLineRepulsion(LineDrawer owner) {
+    PVector force = new PVector(0, 0);
+
+    for (LineDrawer otherDrawer : lineDrawers) {
+
+      // Don't repel points belonging to the same line.
+      if (otherDrawer.id == owner.id) {
+        // print("same line detected");
+        continue;
+      }
+
+      for (LinePoint otherPoint : otherDrawer.linePoints) {
+        float dx = position.x - otherPoint.position.x;
+        float dy = position.y - otherPoint.position.y;
+
+        float distance = sqrt(dx * dx + dy * dy);
+
+        if (distance < lineRepulsionDistance) {
+          PVector away;
+
+          if (distance > 0.001) {
+            away = new PVector(dx, dy);
+            away.normalize();
+          } else {
+            // Break symmetry if two points overlap exactly.
+            away = PVector.random2D();
+          }
+
+          float strength = (lineRepulsionDistance - distance) / lineRepulsionDistance;
+
+          away.mult(strength * lineRepulsionStrength);
+          force.add(away);
+        }
+      }
+    }
+
+    // Prevent many nearby points from creating excessive force.
+    force.limit(maximumRepulsionForce);
+
+    return force;
   }
 
   void display() {
@@ -78,13 +177,15 @@ class LinePoint {
 }
 
 class LineDrawer {
+  String id;
   PVector position;
   PVector velocity;
   boolean finished = false;
 
   ArrayList<LinePoint> linePoints;
 
-  LineDrawer(float x, float y) {
+  LineDrawer(String _id, float x, float y) {
+    id = _id;
     position = new PVector(x, y);
     velocity = new PVector(0, 0);
 
@@ -93,20 +194,22 @@ class LineDrawer {
 
   void update() {
     float noiseScale = 0.01;
-    int col = constrain(int(position.x / scale), 0, cols - 1);
-    int row = constrain(int(position.y / scale), 0, rows - 1);
 
     // draw lines for all created line points
     for (int i = 0; i < linePoints.size(); i++) {
       LinePoint linePoint = linePoints.get(i);
-      linePoint.update();
+      linePoint.update(this);
       if (i > 0) {
         LinePoint linePoint1 = linePoints.get(i - 1);
         LinePoint linePoint2 = linePoint;
-        float strokeWeightValue = map(noiseWeight * noise(row * noiseScale + noiseIteration, col * noiseScale + noiseIteration) + sineWaveWeight * sin(row * (noiseScale * 5)), 0, 1, 2, 10);
-        stroke(0);
-        strokeWeight(strokeWeightValue);
-        line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
+        int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
+        int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
+        if (dist(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y) <= maximumLineLength) {
+          float strokeWeightValue = map(noiseWeight * 1.2 * noise(row * noiseScale + noiseIteration * i * 0.1, col * noiseScale + noiseIteration * i * 0.1) + sineWaveWeight * 1.5 * sin(row * (noiseScale * 5)), 0, 1, 1, 50);
+          stroke(0);
+          strokeWeight(strokeWeightValue);
+          line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
+        }
       }
     }
 
@@ -121,6 +224,8 @@ class LineDrawer {
     }
 
     PVector acceleration = new PVector(0, 0);
+    int col = constrain(int(position.x / scale), 0, cols - 1);
+    int row = constrain(int(position.y / scale), 0, rows - 1);
     float friction = 0.6;
     float angle = flowField[row][col];
     acceleration.x = cos(angle);
@@ -154,7 +259,7 @@ void setup() {
   flowField = new float[rows][cols];
   generateFlowField(true);
 
-  lineDrawers = new LineDrawer[cols];
+  lineDrawers = new LineDrawer[int(cols * lineCountMultiplier)];
   generateLineDrawers();
 }
 
@@ -162,9 +267,9 @@ void draw() {
   background(255);
   generateFlowField(false);
 
-  //drawFlowField();
-  //drawCircleObstacles();
-  //drawLineField();
+  drawFlowField();
+  drawCircleObstacles();
+  drawLineField();
 
   drawLines();
 
@@ -184,8 +289,8 @@ void generateCircleObstacles() {
   firstCircle.yPos = int(random(positionalBuffer + firstCircle.radius, rows / 2 - firstCircle.radius));
   
   secondCircle.radius = int(random(radiusBuffer, cols / 2 - radiusBuffer)) + 1;
-  secondCircle.xPos = int(random(cols / 2 + firstCircle.radius, cols - firstCircle.radius));
-  secondCircle.yPos = int(random(rows / 2 + firstCircle.radius, rows - firstCircle.radius - positionalBuffer));
+  secondCircle.xPos = int(random(cols / 2 + secondCircle.radius, cols - secondCircle.radius));
+  secondCircle.yPos = int(random(rows / 2 + secondCircle.radius, rows - secondCircle.radius - positionalBuffer));
   
   circleObstacles[0] = firstCircle;
   circleObstacles[1] = secondCircle;
@@ -304,10 +409,10 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
 }
 
 void generateLineDrawers() {
-  for (int i = 0; i < cols; i++) {
-    float x = (i * scale);
+  for (int i = 0; i < int(cols * lineCountMultiplier); i++) {
+    float x = (i * scale / lineCountMultiplier);
     float y = 0;
-    lineDrawers[i] = new LineDrawer(x, y);
+    lineDrawers[i] = new LineDrawer("lid" + i, x, y);
     print("Creating line drawer " + i + " at " + x + "\n");
   }
 }
@@ -320,6 +425,8 @@ void drawFlowField() {
       pushMatrix();
       translate(j*scale, i*scale); // row index is technically y value and col index is technically x value
       rotate(flowField[i][j]);
+      strokeWeight(1);
+      stroke(0, 255, 0);
       line(0, 0, scale * 0.5, 0);
       popMatrix();
     }
@@ -328,7 +435,13 @@ void drawFlowField() {
 
 void drawCircleObstacles() {
   for (int i = 0; i < circleObstacleCount; i++) {
-    circle(circleObstacles[i].xPos * scale, circleObstacles[i].yPos * scale, circleObstacles[i].radius * scale);
+    strokeWeight(5);
+    stroke(255, 0, 0);
+    circle(
+      circleObstacles[i].xPos * scale,
+      circleObstacles[i].yPos * scale,
+      circleObstacles[i].radius * scale * 2
+    );
   }
 }
 
@@ -342,6 +455,8 @@ void drawLineField() {
       float angle = flowField[int(y / scale)][int(x / scale)];
       newX = x + scale * cos(angle);
       newY = y + scale * sin(angle);
+      strokeWeight(1);
+      stroke(0, 0, 255);
       line(x, y, newX, newY);
       x = newX;
       y = newY;
