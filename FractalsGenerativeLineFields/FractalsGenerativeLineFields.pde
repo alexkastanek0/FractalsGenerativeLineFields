@@ -1,11 +1,3 @@
-class CircleObstacle {
-  public int xPos,yPos;
-  public int radius;
-}
-
-int circleObstacleCount = 2;
-CircleObstacle[] circleObstacles;
-
 float scale = 10;
 int rows,cols;
 float[][] flowField;
@@ -31,6 +23,16 @@ float obstacleRepulsionStrength = 0.15;
 float lineRepulsionDistance = 50;
 float lineRepulsionStrength = 0.1;
 float maximumRepulsionForce = 0.2;
+
+int circleObstacleCount = 2;
+CircleObstacle[] circleObstacles;
+
+LineDrawer[] lineDrawers;
+
+class CircleObstacle {
+  public int xPos,yPos;
+  public int radius;
+}
 
 class LinePoint {
   PVector position;
@@ -244,8 +246,6 @@ class LineDrawer {
     // LinePoint now handles the display
   }
 }
-
-LineDrawer[] lineDrawers;
 
 void setup() {
   size(360, 640);
