@@ -97,12 +97,10 @@ class LineDrawer {
         LinePoint linePoint2 = linePoint;
         int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
         int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
-        if (dist(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y) <= maximumLineLength) {
-          float strokeWeightValue = map(noiseWeight * 1.2 * noise(row * noiseScale + noiseIteration * i * 0.01, col * noiseScale + noiseIteration * i * 0.01)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, 5, 50);
-          stroke(0);
-          strokeWeight(strokeWeightValue);
-          line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
-        }
+        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + noiseIteration * i * 0.001, col * noiseScale + noiseIteration * i * 0.001)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, 1, 20);
+        stroke(0);
+        strokeWeight(strokeWeightValue);
+        line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
       }
     }
   }
@@ -234,7 +232,6 @@ float calculateObstacleRepulsion(int circleIndex, int row, int col, float flowFi
 
 float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
   int neighborCount = 8;
-  int smoothingIterations = 5;
   float smoothingStrength = 0.15;
   
   PVector[] neighborRelativeCoordinates = new PVector[neighborCount];
@@ -247,32 +244,30 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
   neighborRelativeCoordinates[6] = new PVector(-1, 1);
   neighborRelativeCoordinates[7] = new PVector(-1, 0);
   
-  for (int s = 0; s < smoothingIterations; s++) {
-    float sumX = 0;
-    float sumY = 0;
+  float sumX = 0;
+  float sumY = 0;
 
-    // for each neighbor
-    for (int n = 0; n < neighborCount; n++) {
-      if (
-        col + neighborRelativeCoordinates[n].x >= 0 && 
-        row + neighborRelativeCoordinates[n].y >= 0 && 
-        col + neighborRelativeCoordinates[n].x < cols && 
-        row + neighborRelativeCoordinates[n].y < rows
-      ) {
-        PVector neighborCoordinates = new PVector(col + neighborRelativeCoordinates[n].x, row + neighborRelativeCoordinates[n].y);
-        float neighborAngle = flowField[int(neighborCoordinates.y)][int(neighborCoordinates.x)];
-        sumX += cos(neighborAngle);
-        sumY += sin(neighborAngle);
-      }
+  // for each neighbor
+  for (int n = 0; n < neighborCount; n++) {
+    if (
+      col + neighborRelativeCoordinates[n].x >= 0 && 
+      row + neighborRelativeCoordinates[n].y >= 0 && 
+      col + neighborRelativeCoordinates[n].x < cols && 
+      row + neighborRelativeCoordinates[n].y < rows
+    ) {
+      PVector neighborCoordinates = new PVector(col + neighborRelativeCoordinates[n].x, row + neighborRelativeCoordinates[n].y);
+      float neighborAngle = flowField[int(neighborCoordinates.y)][int(neighborCoordinates.x)];
+      sumX += cos(neighborAngle);
+      sumY += sin(neighborAngle);
     }
-  
-    float averageAngle = atan2(sumY, sumX);
-    flowFieldAngle = lerpAngle(
-      flowFieldAngle,
-      averageAngle,
-      smoothingStrength
-    );
   }
+
+  float averageAngle = atan2(sumY, sumX);
+  flowFieldAngle = lerpAngle(
+    flowFieldAngle,
+    averageAngle,
+    smoothingStrength
+  );
   
   return flowFieldAngle;
 }
