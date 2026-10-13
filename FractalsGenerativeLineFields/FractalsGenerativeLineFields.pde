@@ -8,23 +8,9 @@ float noiseIteration = 0;
 float noiseScale = 0.01;
 float noiseWeight = 0.4;
 float sineWaveWeight = 0.15;
-
-float wiggleSpeedLowerBound = 0.015;
-float wiggleSpeedUpperBound = 0.035;
-float wiggleAmountLowerBound = 0.15;
-float wiggleAmountUpperBound = 0.4;
-float wiggleAmplitude = 0.28;
-float linePointFlowFieldInfluence = 0.1;
-float maximumLinePointSpeed = 0.8;
-float maximumLineLength = 100;
-float linePointDamping = 0.97;
-float lineSeedSpacing = 50;
-
-float obstacleRepulsionDistance = 50;
-float obstacleRepulsionStrength = 0.15;
-float lineRepulsionDistance = 50;
-float lineRepulsionStrength = 0.1;
-float maximumRepulsionForce = 0.2;
+float lineSeedSpacing = 12;
+float lineStrokeWeightMin = 1;
+float lineStrokeWeightMax = 5;
 
 int circleObstacleCount = 2;
 CircleObstacle[] circleObstacles;
@@ -72,17 +58,10 @@ class LineDrawer {
     while (currentPosition.x >= 0 && currentPosition.x <= width && currentPosition.y >= 0 && currentPosition.y <= height) {
       linePoints.add(new LinePoint(currentPosition.x, currentPosition.y));
 
-      // Keep the flow-field lookup inside the grid.
-      int col = constrain(int(currentPosition.x / scale), 0, cols - 1);
-      int row = constrain(int(currentPosition.y / scale), 0, rows - 1);
+      PVector newPosition = rk4Step(currentPosition, integrationStep);
 
-      // apply the integration step into the flow field
-      float flowAngle = flowField[row][col];
-      float newX = currentPosition.x + integrationStep * cos(flowAngle);
-      float newY = currentPosition.y + integrationStep * sin(flowAngle);
-
-      currentPosition.x = newX;
-      currentPosition.y = newY;
+      currentPosition.x = newPosition.x;
+      currentPosition.y = newPosition.y;
     }
   }
 
@@ -97,7 +76,7 @@ class LineDrawer {
         LinePoint linePoint2 = linePoint;
         int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
         int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
-        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + noiseIteration * i * 0.001, col * noiseScale + noiseIteration * i * 0.001)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, 1, 20);
+        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + noiseIteration * i * 0.001, col * noiseScale + noiseIteration * i * 0.001)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
         stroke(0);
         strokeWeight(strokeWeightValue);
         line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
@@ -347,4 +326,70 @@ float angleDifference(float a, float b) {
 float lerpAngle(float a, float b, float t) {
   float difference = angleDifference(a, b);
   return a + difference * t;
+}
+
+PVector sampleFlow(float x, float y) {
+  float gx = constrain(x / scale, 0, cols - 1.001);
+  float gy = constrain(y / scale, 0, rows - 1.001);
+
+  int x0 = int(gx);
+  int y0 = int(gy);
+  int x1 = min(x0 + 1, cols - 1);
+  int y1 = min(y0 + 1, rows - 1);
+
+  float tx = gx - x0;
+  float ty = gy - y0;
+
+  float a00 = flowField[y0][x0];
+  float a10 = flowField[y0][x1];
+  float a01 = flowField[y1][x0];
+  float a11 = flowField[y1][x1];
+
+  float vx =
+    cos(a00) * (1-tx) * (1-ty) +
+    cos(a10) * tx * (1-ty) +
+    cos(a01) * (1-tx) * ty +
+    cos(a11) * tx * ty;
+
+  float vy =
+    sin(a00) * (1-tx) * (1-ty) +
+    sin(a10) * tx * (1-ty) +
+    sin(a01) * (1-tx) * ty +
+    sin(a11) * tx * ty;
+
+  return new PVector(vx, vy).normalize();
+}
+
+PVector flowDirection(float x, float y) {
+  PVector direction = sampleFlow(x, y);
+
+  if (direction.magSq() > 0.000001) {
+    direction.normalize();
+  }
+
+  return direction;
+}
+
+PVector rk4Step(PVector p, float h) {
+  PVector k1 = flowDirection(p.x, p.y);
+
+  PVector k2 = flowDirection(
+    p.x + h * k1.x * 0.5,
+    p.y + h * k1.y * 0.5
+  );
+
+  PVector k3 = flowDirection(
+    p.x + h * k2.x * 0.5,
+    p.y + h * k2.y * 0.5
+  );
+
+  PVector k4 = flowDirection(
+    p.x + h * k3.x,
+    p.y + h * k3.y
+  );
+
+  return new PVector(
+    p.x + h * (k1.x + 2*k2.x + 2*k3.x + k4.x) / 6.0,
+    p.y + h * (k1.y + 2*k2.y + 2*k3.y + k4.y) / 6.0
+  );
 }
