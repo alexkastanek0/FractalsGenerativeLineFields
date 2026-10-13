@@ -7,21 +7,30 @@ float fieldOffsetX;
 float fieldOffsetY;
 
 float[][] smoothedFlowField;
-int smoothingIterationCount = 5;
+int smoothingIterationCount = 50;
 
 float[][] targetFlowField;
 float noiseIterationAmount = 0.1;
 float noiseIteration = 0;
 float fieldMorphSpeed = 0.5;
-float lineStrokeNoiseIterationAmount = 0.0001;
-float lineStrokeNoiseIteration = 0;
 
 float noiseScale = 0.01;
 float noiseWeight = 0.4;
 float sineWaveWeight = 0.15;
-float lineSeedSpacing = 32;
-float lineStrokeWeightMin = 0.0000001;
-float lineStrokeWeightMax = 100;
+float lineSeedSpacing = 20;
+
+float densityCellSize = 20;
+int densityCols, densityRows;
+float[][] lineDensity;
+float densityRadius = 5;
+float densityStrength = 20;
+float densityInfluence = 0.7;
+float noiseInfluence = 0.3;
+float lineStrokeNoiseIterationAmount = 0.015;
+float lineStrokeNoiseIteration = 0.2;
+float lineStrokeWeightMin = 1;
+float lineStrokeWeightMax = 25;
+float strokeWeightSmoothing = 0.1;
 
 int circleObstacleCount = 2;
 CircleObstacle[] circleObstacles;
@@ -81,17 +90,35 @@ class LineDrawer {
   }
 
   void display() {
+    if (linePoints.size() < 2) {
+      return;
+    }
+
+    float currentWeight = getTargetStrokeWeight(
+      linePoints.get(0).position.x,
+      linePoints.get(0).position.y
+    );
+
     // draw lines for all created line points
-    float noiseScale = 0.01;
+    // float noiseScale = 0.01;
     for (int i = 0; i < linePoints.size(); i++) {
       LinePoint linePoint = linePoints.get(i);
       // linePoint.display();
       if (i > 0) {
         LinePoint linePoint1 = linePoints.get(i - 1);
         LinePoint linePoint2 = linePoint;
-        int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
-        int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
-        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + lineStrokeNoiseIteration * i * 0.1, col * noiseScale + lineStrokeNoiseIteration * i * 0.1)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
+        float midX = (linePoint1.position.x + linePoint2.position.x) * 0.5;
+        float midY = (linePoint1.position.y + linePoint2.position.y) * 0.5;
+        float targetWeight = getTargetStrokeWeight(midX, midY);
+        // int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
+        // int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
+        // float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + lineStrokeNoiseIteration * i * 0.1, col * noiseScale + lineStrokeNoiseIteration * i * 0.1)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
+        // Smooth transitions between consecutive segments.
+        float strokeWeightValue = lerp(
+          currentWeight,
+          targetWeight,
+          strokeWeightSmoothing
+        );
         stroke(0);
         strokeWeight(strokeWeightValue);
         line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
@@ -110,6 +137,10 @@ void setup() {
   cols = int(width * 3 / scale);
   visibleRows = int(height/scale);
   visibleCols = int(width/scale);
+
+  densityCols = ceil(width / densityCellSize);
+  densityRows = ceil(height / densityCellSize);
+  lineDensity = new float[densityRows][densityCols];
   
   circleObstacles = new CircleObstacle[circleObstacleCount];
   generateCircleObstacles();
@@ -169,23 +200,23 @@ void generateFlowField() {
       float worldX = fieldOffsetX + j * scale;
       float worldY = fieldOffsetY + i * scale;
       targetFlowField[i][j] = generateFlowFieldAngle(worldX, worldY);
-      // for (int c = 0; c < circleObstacleCount; c++) {
-      //   targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
-      // }
+      for (int c = 0; c < circleObstacleCount; c++) {
+        targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
+      }
     }
   }
 
   for (int s = 0; s < smoothingIterationCount; s++) {
     // apply obstacle repulsion before each smoothing iteration
-    for (int i = 0; i < rows; i++) {
-      for (int j = 0; j < cols; j++) {
-        float worldX = fieldOffsetX + j * scale;
-        float worldY = fieldOffsetY + i * scale;
-        for (int c = 0; c < circleObstacleCount; c++) {
-          targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
-        }
-      }
-    }
+    // for (int i = 0; i < rows; i++) {
+    //   for (int j = 0; j < cols; j++) {
+    //     float worldX = fieldOffsetX + j * scale;
+    //     float worldY = fieldOffsetY + i * scale;
+    //     for (int c = 0; c < circleObstacleCount; c++) {
+    //       targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
+    //     }
+    //   }
+    // }
     for (int i = 0; i < rows; i++) {
       for (int j = 0; j < cols; j++) {
         smoothedFlowField[i][j] = calculateNeighborSmoothing(i, j, targetFlowField[i][j]);
@@ -221,7 +252,7 @@ float calculateObstacleRepulsion(int circleIndex, float x, float y, float flowFi
   float deltaX = x - circle.xPos;
   float deltaY = y - circle.yPos;
   float distance = sqrt(deltaX * deltaX + deltaY * deltaY);
-  float influenceMultiplier = 2;
+  float influenceMultiplier = 4;
   float influence = circle.radius * influenceMultiplier;
   if (distance < influence) {
     // angle pointing away from the obstacle
@@ -325,6 +356,76 @@ void generateLineDrawers() {
   lineDrawers = drawers.toArray(new LineDrawer[0]);
 }
 
+void buildLineDensity() {
+  // Reset the density grid.
+  for (int row = 0; row < densityRows; row++) {
+    for (int col = 0; col < densityCols; col++) {
+      lineDensity[row][col] = 0;
+    }
+  }
+
+  // Each streamline contributes at most once per cell.
+  for (LineDrawer drawer : lineDrawers) {
+
+    // Track cells visited by this particular streamline.
+    boolean[][] visited = new boolean[densityRows][densityCols];
+
+    for (LinePoint point : drawer.linePoints) {
+      float x = point.position.x;
+      float y = point.position.y;
+
+      // Ignore points outside the visible canvas.
+      if (x < 0 || x >= width || y < 0 || y >= height) {
+        continue;
+      }
+
+      int col = int(x / densityCellSize);
+      int row = int(y / densityCellSize);
+
+      if (!visited[row][col]) {
+        lineDensity[row][col] += 1;
+        visited[row][col] = true;
+      }
+    }
+  }
+
+  smoothLineDensity();
+}
+
+void smoothLineDensity() {
+  float[][] smoothed = new float[densityRows][densityCols];
+
+  for (int row = 0; row < densityRows; row++) {
+    for (int col = 0; col < densityCols; col++) {
+      float sum = 0;
+      float weightSum = 0;
+
+      // A 3x3 neighborhood with greater weight at the center.
+      for (int dy = -1; dy <= 1; dy++) {
+        for (int dx = -1; dx <= 1; dx++) {
+          int nr = row + dy;
+          int nc = col + dx;
+
+          if (nr < 0 || nr >= densityRows ||
+              nc < 0 || nc >= densityCols) {
+            continue;
+          }
+
+          float weight = (dx == 0 && dy == 0) ? 4.0 : 
+                         (dx == 0 || dy == 0) ? 2.0 : 1.0;
+
+          sum += lineDensity[nr][nc] * weight;
+          weightSum += weight;
+        }
+      }
+
+      smoothed[row][col] = sum / weightSum;
+    }
+  }
+
+  lineDensity = smoothed;
+}
+
 /** Draw Functions **/
 
 void drawFlowField() {
@@ -426,6 +527,11 @@ void drawLineField() {
 void drawLines() {
   for (int i = 0; i < lineDrawers.length; i++) {
     lineDrawers[i].update();
+  }
+
+  buildLineDensity();
+
+  for (int i = 0; i < lineDrawers.length; i++) {
     lineDrawers[i].display();
   }
 }
@@ -525,5 +631,55 @@ PVector rk4Step(PVector p, float h) {
   return new PVector(
     p.x + h * (k1.x + 2*k2.x + 2*k3.x + k4.x) / 6.0,
     p.y + h * (k1.y + 2*k2.y + 2*k3.y + k4.y) / 6.0
+  );
+}
+
+float getTargetStrokeWeight(float x, float y) {
+  int col = constrain(
+    int(x / densityCellSize),
+    0,
+    densityCols - 1
+  );
+
+  int row = constrain(
+    int(y / densityCellSize),
+    0,
+    densityRows - 1
+  );
+
+  // Density: high density produces thin lines.
+  float density = lineDensity[row][col];
+
+  // Tune this to match your actual density values.
+  float densityNormalized = constrain(
+    density / 4,
+    0,
+    1
+  );
+
+  densityNormalized = pow(densityNormalized, 0.8);
+
+  float densityWeight = lerp(
+    lineStrokeWeightMax,
+    lineStrokeWeightMin,
+    densityNormalized
+  );
+
+  // Noise adds a subtle variation around the density weight.
+  float n = noise(
+    x * lineStrokeNoiseIteration + noiseIteration * lineStrokeNoiseIterationAmount,
+    y * lineStrokeNoiseIteration + noiseIteration * lineStrokeNoiseIterationAmount
+  );
+
+  float noiseOffset = map(n, 0, 1, -1, 1);
+
+  float noiseAmount = 0.2 * (
+    lineStrokeWeightMax - lineStrokeWeightMin
+  );
+
+  return constrain(
+    densityWeight + noiseOffset * noiseAmount,
+    lineStrokeWeightMin,
+    lineStrokeWeightMax
   );
 }
