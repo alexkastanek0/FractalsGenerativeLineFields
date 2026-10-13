@@ -1,10 +1,15 @@
 float scale = 10;
 int rows,cols;
 float[][] flowField;
+
 float[][] smoothedFlowField;
 int smoothingIterationCount = 5;
+
+float[][] targetFlowField;
 float noiseIterationAmount = 0.001;
 float noiseIteration = 0;
+float fieldMorphSpeed = 0.01;
+
 float noiseScale = 0.01;
 float noiseWeight = 0.4;
 float sineWaveWeight = 0.15;
@@ -94,9 +99,12 @@ void setup() {
   circleObstacles = new CircleObstacle[circleObstacleCount];
   generateCircleObstacles();
   
-  flowField = new float[rows][cols];
+
+  targetFlowField = new float[rows][cols];
   smoothedFlowField = new float[rows][cols];
+  flowField = new float[rows][cols];
   generateFlowField();
+  morphFlowField();
 
   generateLineDrawers();
 }
@@ -104,10 +112,11 @@ void setup() {
 void draw() {
   background(255);
   generateFlowField();
+  morphFlowField();
 
-  drawFlowField();
+  // drawFlowField();
   // drawCircleObstacles();
-  drawLineField();
+  // drawLineField();
   drawLines();
 
   noiseIteration += noiseIterationAmount;
@@ -139,9 +148,9 @@ void generateCircleObstacles() {
 void generateFlowField() {
   for (int i = 0; i < rows; i++) {
     for (int j = 0; j < cols; j++) {
-      flowField[i][j] = generateFlowFieldAngle(i, j);
+      targetFlowField[i][j] = generateFlowFieldAngle(i, j);
       for (int c = 0; c < circleObstacleCount; c++) {
-        flowField[i][j] = calculateObstacleRepulsion(c, i, j, flowField[i][j]);
+        targetFlowField[i][j] = calculateObstacleRepulsion(c, i, j, targetFlowField[i][j]);
       }
     }
   }
@@ -149,12 +158,12 @@ void generateFlowField() {
   for (int s = 0; s < smoothingIterationCount; s++) {
     for (int i = 0; i < rows; i++) {
       for (int j = 0; j < cols; j++) {
-        smoothedFlowField[i][j] = calculateNeighborSmoothing(i, j, flowField[i][j]);
+        smoothedFlowField[i][j] = calculateNeighborSmoothing(i, j, targetFlowField[i][j]);
       }
     }
     // copy smoothed flow field into flow field
     for (int i = 0; i < rows; i++) {
-      flowField[i] = smoothedFlowField[i].clone();
+      targetFlowField[i] = smoothedFlowField[i].clone();
     }
   }
 }
@@ -235,7 +244,7 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
       row + neighborRelativeCoordinates[n].y < rows
     ) {
       PVector neighborCoordinates = new PVector(col + neighborRelativeCoordinates[n].x, row + neighborRelativeCoordinates[n].y);
-      float neighborAngle = flowField[int(neighborCoordinates.y)][int(neighborCoordinates.x)];
+      float neighborAngle = targetFlowField[int(neighborCoordinates.y)][int(neighborCoordinates.x)];
       sumX += cos(neighborAngle);
       sumY += sin(neighborAngle);
     }
@@ -249,6 +258,18 @@ float calculateNeighborSmoothing(int row, int col, float flowFieldAngle) {
   );
   
   return flowFieldAngle;
+}
+
+void morphFlowField() {
+  for (int i = 0; i < rows; i++) {
+    for (int j = 0; j < cols; j++) {
+      flowField[i][j] = lerpAngle(
+        flowField[i][j],
+        targetFlowField[i][j],
+        fieldMorphSpeed
+      );
+    }
+  }
 }
 
 void generateLineDrawers() {
