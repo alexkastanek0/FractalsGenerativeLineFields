@@ -1,21 +1,27 @@
 float scale = 10;
 int rows,cols;
+int visibleRows, visibleCols;
+
 float[][] flowField;
+float fieldOffsetX;
+float fieldOffsetY;
 
 float[][] smoothedFlowField;
 int smoothingIterationCount = 5;
 
 float[][] targetFlowField;
-float noiseIterationAmount = 0.001;
+float noiseIterationAmount = 0.1;
 float noiseIteration = 0;
-float fieldMorphSpeed = 0.01;
+float fieldMorphSpeed = 0.5;
+float lineStrokeNoiseIterationAmount = 0.0001;
+float lineStrokeNoiseIteration = 0;
 
 float noiseScale = 0.01;
 float noiseWeight = 0.4;
 float sineWaveWeight = 0.15;
-float lineSeedSpacing = 12;
-float lineStrokeWeightMin = 1;
-float lineStrokeWeightMax = 5;
+float lineSeedSpacing = 32;
+float lineStrokeWeightMin = 0.0000001;
+float lineStrokeWeightMax = 100;
 
 int circleObstacleCount = 2;
 CircleObstacle[] circleObstacles;
@@ -23,8 +29,8 @@ CircleObstacle[] circleObstacles;
 LineDrawer[] lineDrawers;
 
 class CircleObstacle {
-  public int xPos,yPos;
-  public int radius;
+  public float xPos,yPos;
+  public float radius;
 }
 
 class LinePoint {
@@ -60,13 +66,17 @@ class LineDrawer {
 
     // create line points by following a curve traced by the flow field
     PVector currentPosition = new PVector(startPosition.x, startPosition.y);
-    while (currentPosition.x >= 0 && currentPosition.x <= width && currentPosition.y >= 0 && currentPosition.y <= height) {
+    int maxSteps = 5000;
+    int stepCounter = 0;
+    while (currentPosition.x >= fieldOffsetX && currentPosition.x <= width - fieldOffsetX && currentPosition.y >= fieldOffsetY && currentPosition.y <= height - fieldOffsetY && stepCounter < maxSteps) {
       linePoints.add(new LinePoint(currentPosition.x, currentPosition.y));
 
       PVector newPosition = rk4Step(currentPosition, integrationStep);
 
       currentPosition.x = newPosition.x;
       currentPosition.y = newPosition.y;
+
+      stepCounter++;
     }
   }
 
@@ -81,7 +91,7 @@ class LineDrawer {
         LinePoint linePoint2 = linePoint;
         int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
         int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
-        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + noiseIteration * i * 0.001, col * noiseScale + noiseIteration * i * 0.001)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
+        float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + lineStrokeNoiseIteration * i * 0.1, col * noiseScale + lineStrokeNoiseIteration * i * 0.1)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
         stroke(0);
         strokeWeight(strokeWeightValue);
         line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
@@ -91,15 +101,19 @@ class LineDrawer {
 }
 
 void setup() {
-  size(360, 640);
+  size(540, 960);
+
+  fieldOffsetX = -float(width);
+  fieldOffsetY = -float(height);
   
-  rows = int(height/scale);
-  cols = int(width/scale);
+  rows = int(height * 3 / scale);
+  cols = int(width * 3 / scale);
+  visibleRows = int(height/scale);
+  visibleCols = int(width/scale);
   
   circleObstacles = new CircleObstacle[circleObstacleCount];
   generateCircleObstacles();
   
-
   targetFlowField = new float[rows][cols];
   smoothedFlowField = new float[rows][cols];
   flowField = new float[rows][cols];
@@ -114,29 +128,33 @@ void draw() {
   generateFlowField();
   morphFlowField();
 
-  // drawFlowField();
-  // drawCircleObstacles();
+  drawFlowField();
+  drawCircleObstacles();
   // drawLineField();
   drawLines();
 
   noiseIteration += noiseIterationAmount;
+  lineStrokeNoiseIteration += lineStrokeNoiseIterationAmount;
 }
 
 /** Generation Functions **/
 
 void generateCircleObstacles() {
+  float radiusMin = 100;
+  float radiusMax = min(width / 4.0, height / 4.0) - 15;
+
+  float positionalBuffer = 100;
+  
   CircleObstacle firstCircle = new CircleObstacle();
   CircleObstacle secondCircle = new CircleObstacle();
-  int radiusBuffer = 7;
-  int positionalBuffer = 10;
+
+  firstCircle.radius = random(radiusMin, radiusMax);
+  firstCircle.xPos = random(positionalBuffer, width / 2 - positionalBuffer);
+  firstCircle.yPos = random(positionalBuffer, height / 2 - positionalBuffer);
   
-  firstCircle.radius = int(random(radiusBuffer, cols / 2 - radiusBuffer)) + 1;
-  firstCircle.xPos = int(random(0 + firstCircle.radius, cols / 2 - firstCircle.radius));
-  firstCircle.yPos = int(random(positionalBuffer + firstCircle.radius, rows / 2 - firstCircle.radius));
-  
-  secondCircle.radius = int(random(radiusBuffer, cols / 2 - radiusBuffer)) + 1;
-  secondCircle.xPos = int(random(cols / 2 + secondCircle.radius, cols - secondCircle.radius));
-  secondCircle.yPos = int(random(rows / 2 + secondCircle.radius, rows - secondCircle.radius - positionalBuffer));
+  secondCircle.radius = random(radiusMin, radiusMax);
+  secondCircle.xPos = random(width / 2 + positionalBuffer, width - positionalBuffer);
+  secondCircle.yPos = random(height / 2 + positionalBuffer, height - positionalBuffer);
   
   circleObstacles[0] = firstCircle;
   circleObstacles[1] = secondCircle;
@@ -148,14 +166,26 @@ void generateCircleObstacles() {
 void generateFlowField() {
   for (int i = 0; i < rows; i++) {
     for (int j = 0; j < cols; j++) {
-      targetFlowField[i][j] = generateFlowFieldAngle(i, j);
-      for (int c = 0; c < circleObstacleCount; c++) {
-        targetFlowField[i][j] = calculateObstacleRepulsion(c, i, j, targetFlowField[i][j]);
-      }
+      float worldX = fieldOffsetX + j * scale;
+      float worldY = fieldOffsetY + i * scale;
+      targetFlowField[i][j] = generateFlowFieldAngle(worldX, worldY);
+      // for (int c = 0; c < circleObstacleCount; c++) {
+      //   targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
+      // }
     }
   }
 
   for (int s = 0; s < smoothingIterationCount; s++) {
+    // apply obstacle repulsion before each smoothing iteration
+    for (int i = 0; i < rows; i++) {
+      for (int j = 0; j < cols; j++) {
+        float worldX = fieldOffsetX + j * scale;
+        float worldY = fieldOffsetY + i * scale;
+        for (int c = 0; c < circleObstacleCount; c++) {
+          targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
+        }
+      }
+    }
     for (int i = 0; i < rows; i++) {
       for (int j = 0; j < cols; j++) {
         smoothedFlowField[i][j] = calculateNeighborSmoothing(i, j, targetFlowField[i][j]);
@@ -166,19 +196,32 @@ void generateFlowField() {
       targetFlowField[i] = smoothedFlowField[i].clone();
     }
   }
+
+  // apply obstacle repulsion after smoothing
+  // for (int i = 0; i < rows; i++) {
+  //   for (int j = 0; j < cols; j++) {
+  //     float worldX = fieldOffsetX + j * scale;
+  //     float worldY = fieldOffsetY + i * scale;
+  //     for (int c = 0; c < circleObstacleCount; c++) {
+  //       targetFlowField[i][j] = calculateObstacleRepulsion(c, worldX, worldY, targetFlowField[i][j]);
+  //     }
+  //   }
+  // }
 }
 
-float generateFlowFieldAngle(float row, float col) {
-  float flowFieldAngle = map(noiseWeight * noise(row * noiseScale + noiseIteration, col * noiseScale + noiseIteration) + sineWaveWeight * sin(row * (noiseScale * 5)), 0, 1, 0, 2 * PI);
+float generateFlowFieldAngle(float x, float y) {
+  float sineWavelength = 540;
+  float sine = sin(TWO_PI * y / sineWavelength);
+  float flowFieldAngle = map(noiseWeight * noise(x * noiseScale + noiseIteration, y * noiseScale + noiseIteration) + sineWaveWeight * sine, 0, 1, 0, 2 * PI);
   return flowFieldAngle;
 }
 
-float calculateObstacleRepulsion(int circleIndex, int row, int col, float flowFieldAngle) {
+float calculateObstacleRepulsion(int circleIndex, float x, float y, float flowFieldAngle) {
   CircleObstacle circle = circleObstacles[circleIndex];
-  float deltaX = col - circle.xPos;
-  float deltaY = row - circle.yPos;
+  float deltaX = x - circle.xPos;
+  float deltaY = y - circle.yPos;
   float distance = sqrt(deltaX * deltaX + deltaY * deltaY);
-  float influenceMultiplier = 1.05;
+  float influenceMultiplier = 2;
   float influence = circle.radius * influenceMultiplier;
   if (distance < influence) {
     // angle pointing away from the obstacle
@@ -268,14 +311,15 @@ void morphFlowField() {
         targetFlowField[i][j],
         fieldMorphSpeed
       );
+      // flowField[i][j] = targetFlowField[i][j];
     }
   }
 }
 
 void generateLineDrawers() {
   ArrayList<LineDrawer> drawers = new ArrayList<LineDrawer>();
-  for (float x = lineSeedSpacing / 2; x < width; x += lineSeedSpacing) {
-    drawers.add(new LineDrawer("lid" + drawers.size(), x, 0));
+  for (float x = fieldOffsetX + (lineSeedSpacing / 2); x < width - fieldOffsetX; x += lineSeedSpacing) {
+    drawers.add(new LineDrawer("lid" + drawers.size(), x, -50));
     print("Creating line drawer " + drawers.size() + " at " + x + "\n");
   }
   lineDrawers = drawers.toArray(new LineDrawer[0]);
@@ -284,11 +328,28 @@ void generateLineDrawers() {
 /** Draw Functions **/
 
 void drawFlowField() {
-  for (int i = 0; i < rows; i++) {
-    for (int j = 0; j < cols; j++) {
+  int firstCol = max(
+    0, int(ceil(-fieldOffsetX / scale))
+  );
+  int lastCol = min(
+    cols - 1, int(floor((width - fieldOffsetX) / scale))
+  );
+  int firstRow = max(
+    0, int(ceil(-fieldOffsetY / scale))
+  );
+  int lastRow = min(
+    rows - 1, int(floor((height - fieldOffsetY) / scale))
+  );
+
+  for (int row = firstRow; row <= lastRow; row++) {
+    for (int col = firstCol; col <= lastCol; col++) {
+      // row index is technically y value and col index is technically x value
+      float worldX = fieldOffsetX + col * scale;
+      float worldY = fieldOffsetY + row * scale;
+
       pushMatrix();
-      translate(j*scale, i*scale); // row index is technically y value and col index is technically x value
-      rotate(flowField[i][j]);
+      translate(worldX, worldY);
+      rotate(flowField[row][col]);
       strokeWeight(1);
       stroke(0, 255, 0);
       line(0, 0, scale * 0.5, 0);
@@ -301,29 +362,63 @@ void drawCircleObstacles() {
   for (int i = 0; i < circleObstacleCount; i++) {
     strokeWeight(5);
     stroke(255, 0, 0);
+    fill(255, 0, 0, 127);
     circle(
-      circleObstacles[i].xPos * scale,
-      circleObstacles[i].yPos * scale,
-      circleObstacles[i].radius * scale * 2
+      circleObstacles[i].xPos,
+      circleObstacles[i].yPos,
+      circleObstacles[i].radius * 2
     );
   }
 }
 
 void drawLineField() {
-  float x,y;
-  float newX,newY;
-  for (int i = 0; i < rows; i++) {
-    x = i * scale;
-    y = 0;
-    while (x >= 0 && x < width && y >= 0 && y < height) {
-      float angle = flowField[int(y / scale)][int(x / scale)];
-      newX = x + scale * cos(angle);
-      newY = y + scale * sin(angle);
-      strokeWeight(1);
-      stroke(0, 0, 255);
-      line(x, y, newX, newY);
-      x = newX;
-      y = newY;
+  float seedSpacing = scale;
+
+  // Seed lines across the visible top edge.
+  for (float startX = seedSpacing / 2;
+       startX < width;
+       startX += seedSpacing) {
+
+    PVector currentPosition = new PVector(startX, 0);
+
+    int maxSteps = 5000;
+
+    for (int step = 0; step < maxSteps; step++) {
+
+      // Stop when the streamline leaves the visible canvas.
+      if (
+        currentPosition.x < 0 ||
+        currentPosition.x >= width ||
+        currentPosition.y < 0 ||
+        currentPosition.y >= height
+      ) {
+        break;
+      }
+
+      PVector nextPosition = rk4Step(
+        currentPosition,
+        scale
+      );
+
+      // Draw only segments that remain inside the canvas.
+      if (
+        nextPosition.x >= 0 &&
+        nextPosition.x < width &&
+        nextPosition.y >= 0 &&
+        nextPosition.y < height
+      ) {
+        strokeWeight(1);
+        stroke(0, 0, 255);
+
+        line(
+          currentPosition.x,
+          currentPosition.y,
+          nextPosition.x,
+          nextPosition.y
+        );
+      }
+
+      currentPosition = nextPosition;
     }
   }
 }
@@ -350,11 +445,17 @@ float lerpAngle(float a, float b, float t) {
 }
 
 PVector sampleFlow(float x, float y) {
-  float gx = constrain(x / scale, 0, cols - 1.001);
-  float gy = constrain(y / scale, 0, rows - 1.001);
+  // convert screen coordinates to field-grid coordinates
+  float gx = (x - fieldOffsetX) / scale;
+  float gy = (y - fieldOffsetY) / scale;
 
-  int x0 = int(gx);
-  int y0 = int(gy);
+  // clamp to valid grid domain
+  gx = constrain(gx, 0, cols - 1);
+  gy = constrain(gy, 0, rows - 1);
+
+  int x0 = int(floor(gx));
+  int y0 = int(floor(gy));
+
   int x1 = min(x0 + 1, cols - 1);
   int y1 = min(y0 + 1, rows - 1);
 
@@ -378,7 +479,19 @@ PVector sampleFlow(float x, float y) {
     sin(a01) * (1-tx) * ty +
     sin(a11) * tx * ty;
 
-  return new PVector(vx, vy).normalize();
+  float magnitudeSq = vx * vx + vy * vy;
+
+  // Handle opposing directions whose average nearly cancels.
+  if (magnitudeSq < 0.000001) {
+    return new PVector(cos(a00), sin(a00));
+  }
+
+  float invMagnitude = 1.0 / sqrt(magnitudeSq);
+
+  return new PVector(
+    vx * invMagnitude,
+    vy * invMagnitude
+  );
 }
 
 PVector flowDirection(float x, float y) {
