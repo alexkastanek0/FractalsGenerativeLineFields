@@ -13,7 +13,7 @@ int smoothingIterationCount = 50;
 
 float[][] targetFlowField;
 float noiseIteration = 0;
-float noiseIterationAmountSlow = 0.0001;
+float noiseIterationAmountSlow = 0.01;
 float fieldMorphSpeedSlow = 0.001;
 float noiseIterationAmountFast = 0.1;
 float fieldMorphSpeedFast = 0.5;
@@ -30,10 +30,16 @@ float lineSeedSpacing = 20;
 float densityCellSize = 30;
 int densityCols, densityRows;
 float[][] lineDensity;
+float[][] targetLineDensity;
+float[][] smoothedLineDensity;
+float[][] currentLineDensity;
+float lineWidthMorphSpeedSlow = 0.001;
+float lineWidthMorphSpeedFast = 0.5;
+float lineWidthMorphSpeed = 0;
 float noiseInfluence = 0.025;
 float lineStrokeNoiseIterationAmount = 0.015;
 float lineStrokeNoiseIteration = 0.02;
-float lineStrokeWeightMin = 1;
+float lineStrokeWeightMin = 2;
 float lineStrokeWeightMax = 50;
 float strokeWeightSmoothing = 1;
 
@@ -72,11 +78,14 @@ class LineDrawer {
   ArrayList<LinePoint> linePoints;
 
   int integrationStep = 1; // amount of pixels each line will be
+  
+  float[] currentWidths;
 
   LineDrawer(String _id, float x, float y) {
     id = _id;
     startPosition = new PVector(x, y);
     linePoints = new ArrayList<LinePoint>();
+    currentWidths = new float[0];
   }
 
   void update() {
@@ -119,7 +128,7 @@ class LineDrawer {
     // --------------------------------------------------
     // Two passes of a small Gaussian filter reduce abrupt
     // transitions without making every line uniform.
-    float[] widths = targetWidths.clone();
+    float[] smoothedTargets = targetWidths.clone();
   
     int radius = 8;
     float sigma = 3.5;
@@ -136,15 +145,33 @@ class LineDrawer {
   
           float g = exp(-(j * j) / (2.0 * sigma * sigma));
   
-          sum += widths[k] * g;
+          sum += smoothedTargets[k] * g;
           total += g;
         }
   
         filtered[i] = sum / total;
       }
   
-      widths = filtered;
+      smoothedTargets = filtered;
     }
+    
+    // Initialize widths when the line first appears
+    // or when its point count changes.
+    if (currentWidths.length != n) {
+      currentWidths = smoothedTargets.clone();
+    } else {
+      // Morph current widths toward target widths.
+      for (int i = 0; i < n; i++) {
+        currentWidths[i] = lerp(
+          currentWidths[i],
+          smoothedTargets[i],
+          lineWidthMorphSpeed
+        );
+      }
+    }
+
+    // Use the persistent, morphing widths below.
+    float[] widths = currentWidths.clone();
   
     // --------------------------------------------------
     // 3. Limit width changes along the path.
@@ -356,6 +383,7 @@ void setup() {
   frameRate(framerate);
   noiseIterationAmount = noiseIterationAmountFast;
   fieldMorphSpeed = fieldMorphSpeedFast;
+  lineWidthMorphSpeed = lineWidthMorphSpeedFast;
 
   fieldOffsetX = -float(width);
   fieldOffsetY = -float(height);
@@ -368,6 +396,7 @@ void setup() {
   densityCols = ceil(width / densityCellSize);
   densityRows = ceil(height / densityCellSize);
   lineDensity = new float[densityRows][densityCols];
+  currentLineDensity = new float[densityRows][densityCols];
   
   circleObstacles = new CircleObstacle[circleObstacleCount];
   generateCircleObstacles();
@@ -578,6 +607,18 @@ void morphFlowField() {
   }
 }
 
+void morphLineDensity() {
+  for (int row = 0; row < densityRows; row++) {
+    for (int col = 0; col < densityCols; col++) {
+      currentLineDensity[row][col] = lerp(
+        currentLineDensity[row][col],
+        lineDensity[row][col],
+        lineWidthMorphSpeed
+      );
+    }
+  }
+}
+
 void generateLineDrawers() {
   ArrayList<LineDrawer> drawers = new ArrayList<LineDrawer>();
   for (float x = fieldOffsetX + (lineSeedSpacing / 2); x < width - fieldOffsetX; x += lineSeedSpacing) {
@@ -764,7 +805,11 @@ void drawLines() {
     lineDrawers[i].update();
   }
 
+  // Rebuild the target density from the current streamlines.
   buildLineDensity();
+
+  // Morph the persistent density toward the new target.
+  morphLineDensity();
 
   for (int i = 0; i < lineDrawers.length; i++) {
     lineDrawers[i].display();
@@ -883,7 +928,7 @@ float getTargetStrokeWeight(float x, float y) {
   );
 
   // Density: high density produces thin lines.
-  float density = lineDensity[row][col];
+  float density = currentLineDensity[row][col];
 
   // Tune this to match your actual density values.
   float densityNormalized = constrain(
@@ -934,10 +979,12 @@ void keyPressed() {
       useFastSpeed = false;
       noiseIterationAmount = noiseIterationAmountSlow;
       fieldMorphSpeed = fieldMorphSpeedSlow;
+      lineWidthMorphSpeed = lineWidthMorphSpeedSlow;
     } else {
       useFastSpeed = true;
       noiseIterationAmount = noiseIterationAmountFast;
       fieldMorphSpeed = fieldMorphSpeedFast;
+      lineWidthMorphSpeed = lineWidthMorphSpeedFast;
     }
   }
 }
