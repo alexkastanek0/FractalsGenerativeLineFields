@@ -1,3 +1,5 @@
+import com.hamoid.*;
+
 float scale = 10;
 int rows,cols;
 int visibleRows, visibleCols;
@@ -10,32 +12,40 @@ float[][] smoothedFlowField;
 int smoothingIterationCount = 50;
 
 float[][] targetFlowField;
-float noiseIterationAmount = 0.1;
 float noiseIteration = 0;
-float fieldMorphSpeed = 0.5;
+float noiseIterationAmountSlow = 0.0001;
+float fieldMorphSpeedSlow = 0.001;
+float noiseIterationAmountFast = 0.1;
+float fieldMorphSpeedFast = 0.5;
+float noiseIterationAmount = 0;
+float fieldMorphSpeed = 0;
+boolean useFastSpeed = true;
+
 
 float noiseScale = 0.01;
 float noiseWeight = 0.4;
 float sineWaveWeight = 0.15;
 float lineSeedSpacing = 20;
 
-float densityCellSize = 20;
+float densityCellSize = 30;
 int densityCols, densityRows;
 float[][] lineDensity;
-float densityRadius = 5;
-float densityStrength = 20;
-float densityInfluence = 0.7;
-float noiseInfluence = 0.3;
+float noiseInfluence = 0.025;
 float lineStrokeNoiseIterationAmount = 0.015;
-float lineStrokeNoiseIteration = 0.2;
+float lineStrokeNoiseIteration = 0.02;
 float lineStrokeWeightMin = 1;
-float lineStrokeWeightMax = 25;
-float strokeWeightSmoothing = 0.1;
+float lineStrokeWeightMax = 50;
+float strokeWeightSmoothing = 1;
 
 int circleObstacleCount = 2;
 CircleObstacle[] circleObstacles;
 
 LineDrawer[] lineDrawers;
+PGraphics lineBuffer;
+int renderScale = 3;
+
+int framerate = 60;
+boolean isRecording = false;
 
 class CircleObstacle {
   public float xPos,yPos;
@@ -90,45 +100,262 @@ class LineDrawer {
   }
 
   void display() {
-    if (linePoints.size() < 2) {
-      return;
+    int n = linePoints.size();
+    if (n < 3) return;
+  
+    // --------------------------------------------------
+    // 1. Sample target width at each segment midpoint.
+    // --------------------------------------------------
+    float[] targetWidths = new float[n];
+  
+    for (int i = 0; i < n; i++) {
+      PVector p = linePoints.get(i).position;
+  
+      targetWidths[i] = getTargetStrokeWeight(p.x, p.y);
     }
-
-    float currentWeight = getTargetStrokeWeight(
-      linePoints.get(0).position.x,
-      linePoints.get(0).position.y
-    );
-
-    // draw lines for all created line points
-    // float noiseScale = 0.01;
-    for (int i = 0; i < linePoints.size(); i++) {
-      LinePoint linePoint = linePoints.get(i);
-      // linePoint.display();
-      if (i > 0) {
-        LinePoint linePoint1 = linePoints.get(i - 1);
-        LinePoint linePoint2 = linePoint;
-        float midX = (linePoint1.position.x + linePoint2.position.x) * 0.5;
-        float midY = (linePoint1.position.y + linePoint2.position.y) * 0.5;
-        float targetWeight = getTargetStrokeWeight(midX, midY);
-        // int col = constrain(int(linePoint.position.x / scale), 0, cols - 1);
-        // int row = constrain(int(linePoint.position.y / scale), 0, rows - 1);
-        // float strokeWeightValue = map(/*noiseWeight * 1.2 * */noise(row * noiseScale + lineStrokeNoiseIteration * i * 0.1, col * noiseScale + lineStrokeNoiseIteration * i * 0.1)/*+ sineWaveWeight * 1.5 * sin(row * (noiseScale * 5))*/, 0, 1, lineStrokeWeightMin, lineStrokeWeightMax);
-        // Smooth transitions between consecutive segments.
-        float strokeWeightValue = lerp(
-          currentWeight,
-          targetWeight,
-          strokeWeightSmoothing
-        );
-        stroke(0);
-        strokeWeight(strokeWeightValue);
-        line(linePoint1.position.x, linePoint1.position.y, linePoint2.position.x, linePoint2.position.y);
+  
+    // --------------------------------------------------
+    // 2. Smooth the width profile.
+    // --------------------------------------------------
+    // Two passes of a small Gaussian filter reduce abrupt
+    // transitions without making every line uniform.
+    float[] widths = targetWidths.clone();
+  
+    int radius = 8;
+    float sigma = 3.5;
+  
+    for (int pass = 0; pass < 2; pass++) {
+      float[] filtered = new float[n];
+  
+      for (int i = 0; i < n; i++) {
+        float sum = 0;
+        float total = 0;
+  
+        for (int j = -radius; j <= radius; j++) {
+          int k = constrain(i + j, 0, n - 1);
+  
+          float g = exp(-(j * j) / (2.0 * sigma * sigma));
+  
+          sum += widths[k] * g;
+          total += g;
+        }
+  
+        filtered[i] = sum / total;
       }
+  
+      widths = filtered;
     }
+  
+    // --------------------------------------------------
+    // 3. Limit width changes along the path.
+    // --------------------------------------------------
+    // Widths are in screen pixels. Since integrationStep
+    // is 1, this limits changes per approximately 1 pixel
+    // of streamline distance.
+    float maxWidthChangePerPixel = 0.12;
+  
+    // Forward pass.
+    for (int i = 1; i < n; i++) {
+      PVector a = linePoints.get(i - 1).position;
+      PVector b = linePoints.get(i).position;
+  
+      float distance = PVector.dist(a, b);
+      float limit = maxWidthChangePerPixel * distance;
+  
+      widths[i] = constrain(
+        widths[i],
+        widths[i - 1] - limit,
+        widths[i - 1] + limit
+      );
+    }
+  
+    // Backward pass.
+    for (int i = n - 2; i >= 0; i--) {
+      PVector a = linePoints.get(i).position;
+      PVector b = linePoints.get(i + 1).position;
+  
+      float distance = PVector.dist(a, b);
+      float limit = maxWidthChangePerPixel * distance;
+  
+      widths[i] = constrain(
+        widths[i],
+        widths[i + 1] - limit,
+        widths[i + 1] + limit
+      );
+    }
+  
+    // --------------------------------------------------
+    // 4. Calculate unit tangents at every point.
+    // --------------------------------------------------
+    PVector[] tangents = new PVector[n];
+  
+    for (int i = 0; i < n; i++) {
+      PVector tangent;
+  
+      if (i == 0) {
+        tangent = PVector.sub(
+          linePoints.get(1).position,
+          linePoints.get(0).position
+        );
+      } else if (i == n - 1) {
+        tangent = PVector.sub(
+          linePoints.get(n - 1).position,
+          linePoints.get(n - 2).position
+        );
+      } else {
+        PVector incoming = PVector.sub(
+          linePoints.get(i).position,
+          linePoints.get(i - 1).position
+        );
+  
+        PVector outgoing = PVector.sub(
+          linePoints.get(i + 1).position,
+          linePoints.get(i).position
+        );
+  
+        incoming.normalize();
+        outgoing.normalize();
+  
+        tangent = PVector.add(incoming, outgoing);
+  
+        // A 180-degree reversal has no well-defined
+        // averaged tangent. Fall back to outgoing.
+        if (tangent.magSq() < 0.000001) {
+          tangent = outgoing.copy();
+        }
+      }
+  
+      if (tangent.magSq() < 0.000001) {
+        tangent = new PVector(1, 0);
+      } else {
+        tangent.normalize();
+      }
+  
+      tangents[i] = tangent;
+    }
+  
+    // --------------------------------------------------
+    // 5. Construct curvature-aware ribbon boundaries.
+    // --------------------------------------------------
+    PVector[] left = new PVector[n];
+    PVector[] right = new PVector[n];
+  
+    // Maximum miter length relative to half-width.
+    // Lower values reduce protrusions at tight bends.
+    float miterLimit = 1.5;
+  
+    for (int i = 0; i < n; i++) {
+      PVector p = linePoints.get(i).position;
+      float halfWidth = widths[i] * 0.5;
+  
+      PVector normal;
+  
+      if (i == 0) {
+        PVector t = tangents[i];
+        normal = new PVector(-t.y, t.x);
+  
+      } else if (i == n - 1) {
+        PVector t = tangents[i];
+        normal = new PVector(-t.y, t.x);
+  
+      } else {
+        PVector prev = linePoints.get(i - 1).position;
+        PVector next = linePoints.get(i + 1).position;
+  
+        PVector incoming = PVector.sub(p, prev);
+        PVector outgoing = PVector.sub(next, p);
+  
+        if (incoming.magSq() > 0.000001) {
+          incoming.normalize();
+        }
+  
+        if (outgoing.magSq() > 0.000001) {
+          outgoing.normalize();
+        }
+  
+        PVector n1 = new PVector(-incoming.y, incoming.x);
+        PVector n2 = new PVector(-outgoing.y, outgoing.x);
+  
+        normal = PVector.add(n1, n2);
+  
+        if (normal.magSq() < 0.000001) {
+          normal = n2.copy();
+        } else {
+          normal.normalize();
+        }
+  
+        // Correct for the angle between the averaged
+        // normal and the incoming segment normal.
+        float denominator = normal.dot(n1);
+        float miterLength = halfWidth;
+  
+        if (denominator > 0.0001) {
+          miterLength = halfWidth / denominator;
+        }
+  
+        // Cap the offset at sharp turns.
+        miterLength = min(
+          miterLength,
+          halfWidth * miterLimit
+        );
+  
+        // Store the capped offset in the normal vector.
+        normal.mult(miterLength / max(halfWidth, 0.0001));
+      }
+  
+      left[i] = new PVector(
+        p.x + normal.x * halfWidth,
+        p.y + normal.y * halfWidth
+      );
+  
+      right[i] = new PVector(
+        p.x - normal.x * halfWidth,
+        p.y - normal.y * halfWidth
+      );
+    }
+  
+    // --------------------------------------------------
+    // 6. Draw one solid black polygon at high resolution.
+    // --------------------------------------------------
+    lineBuffer.beginDraw();
+    lineBuffer.noStroke();
+    lineBuffer.fill(0);
+  
+    lineBuffer.beginShape();
+  
+    for (int i = 0; i < n; i++) {
+      lineBuffer.vertex(
+        left[i].x * renderScale,
+        left[i].y * renderScale
+      );
+    }
+  
+    for (int i = n - 1; i >= 0; i--) {
+      lineBuffer.vertex(
+        right[i].x * renderScale,
+        right[i].y * renderScale
+      );
+    }
+  
+    lineBuffer.endShape(CLOSE);
+    lineBuffer.endDraw();
+  
+    image(lineBuffer, 0, 0, width, height);
   }
 }
 
 void setup() {
   size(540, 960);
+  
+  lineBuffer = createGraphics(
+    width * renderScale,
+    height * renderScale
+  );
+  smooth(8);
+  
+  frameRate(framerate);
+  noiseIterationAmount = noiseIterationAmountFast;
+  fieldMorphSpeed = fieldMorphSpeedFast;
 
   fieldOffsetX = -float(width);
   fieldOffsetY = -float(height);
@@ -159,10 +386,14 @@ void draw() {
   generateFlowField();
   morphFlowField();
 
-  drawFlowField();
-  drawCircleObstacles();
-  // drawLineField();
   drawLines();
+  // drawFlowField();
+  // drawCircleObstacles();
+  // drawLineField();
+  
+  if (isRecording) {
+    saveFrame("render/frame-####.png");
+  }
 
   noiseIteration += noiseIterationAmount;
   lineStrokeNoiseIteration += lineStrokeNoiseIterationAmount;
@@ -525,6 +756,10 @@ void drawLineField() {
 }
 
 void drawLines() {
+  lineBuffer.beginDraw();
+  lineBuffer.background(255);
+  lineBuffer.endDraw();
+  
   for (int i = 0; i < lineDrawers.length; i++) {
     lineDrawers[i].update();
   }
@@ -673,7 +908,7 @@ float getTargetStrokeWeight(float x, float y) {
 
   float noiseOffset = map(n, 0, 1, -1, 1);
 
-  float noiseAmount = 0.2 * (
+  float noiseAmount = noiseInfluence * (
     lineStrokeWeightMax - lineStrokeWeightMin
   );
 
@@ -682,4 +917,27 @@ float getTargetStrokeWeight(float x, float y) {
     lineStrokeWeightMin,
     lineStrokeWeightMax
   );
+}
+
+void keyPressed() {
+  if (key == 'r' && !isRecording) {
+    isRecording = true;
+    println("Recording started...");
+  }
+  if (key == 'q' && isRecording) {
+    isRecording = false;
+    println("Recording stopped. Video saved.");
+    exit();
+  }
+  if (key == ' ') {
+    if (useFastSpeed == true) {
+      useFastSpeed = false;
+      noiseIterationAmount = noiseIterationAmountSlow;
+      fieldMorphSpeed = fieldMorphSpeedSlow;
+    } else {
+      useFastSpeed = true;
+      noiseIterationAmount = noiseIterationAmountFast;
+      fieldMorphSpeed = fieldMorphSpeedFast;
+    }
+  }
 }
